@@ -1,6 +1,6 @@
 # plumdb
 
-A datalog tuple store for Clojure/ClojureScript
+A datalog distributed, decentralized tuple store for Clojure/ClojureScript
 
 ## Usage
 
