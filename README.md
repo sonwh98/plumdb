@@ -1,10 +1,13 @@
 # plumdb
 
-A Clojure library designed to ... well, that part is up to you.
+A datalog tuple store for Clojure/ClojureScript
 
 ## Usage
 
-FIXME
+```bash
+% lein repl
+
+```
 
 ## License
 
