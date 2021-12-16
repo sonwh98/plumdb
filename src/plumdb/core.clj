@@ -46,7 +46,7 @@
              (atom {})))
   :stop (flush-val @db "resources/db.edn"))
 
-(defn datoms-with-tx-op
+(defn normalize-datoms
   "a datom is a tuple of 5 elements [e a v tx op]
   add tx and op positions if it is not already there in the datom"
   [datoms]
@@ -56,20 +56,39 @@
             (nil? op) (assoc 4 true)))
         datoms))
 
+(defn entity->datoms
+  "convert an entity map into a vector of datom triples [e a v]"
+  [entity-map]
+  (if-let [id (:id entity-map)]
+    (vec (keep (fn [[a v]]
+                 (when-not (= a :id)
+                   [id a v]))
+               entity-map))
+    entity-map))
+
+(defn flatten-datoms [nested-datoms]
+  (reduce (fn [acc d]
+            (if (vector? (first d))
+              (concat acc d)
+              (concat acc [d])))
+          []
+          nested-datoms))
+
 (defn index
-  "index the given datoms into the db. db is an atom. datoms is a list/vector of datom"
-  [db datoms]
-  (let [datoms (datoms-with-tx-op datoms)]
-    (swap! db (fn [db]
-                (let [db (merge-with concat db {:tx-log datoms})
-                      db (merge-with (fn [& indexes]
-                                       (apply merge-with concat indexes))
-                                     db
-                                     {:eavt (group-by first datoms)}
-                                     {:avet (group-by second datoms)}
-                                     {:aevt (group-by #(nth % 2) datoms)})]
-                  db)))
-    db))
+  "index the given datoms into the db.
+  db is a map with keys :tx-log :eavt :avet :aevt
+  datoms is a list/vector of datom"
+  [db datoms-or-entities]
+  (let [nested-datoms (map entity->datoms datoms-or-entities)
+        datoms (-> nested-datoms flatten-datoms normalize-datoms)]
+    (let [db (merge-with concat db {:tx-log datoms})
+          db (merge-with (fn [& indexes]
+                           (apply merge-with concat indexes))
+                         db
+                         {:eavt (group-by first datoms)}
+                         {:avet (group-by second datoms)}
+                         {:aevt (group-by #(nth % 2) datoms)})]
+      db)))
 
 (defn- start-transaction-indexer
   "index datoms from tx-queue"
@@ -80,7 +99,7 @@
                                               :priority true)]
       (if (= ch tx-queue)
         (do
-          (index db datoms-or-entity-maps)
+          (swap! db merge (index @db datoms-or-entity-maps))
           (recur))
         (log/info "stopping transaction indexer")))))
 
@@ -130,13 +149,22 @@
 
 (defmacro recur-next-clauses
   "macro to reduce boiler-plate code to recur in q function"
-  [clauses bind-symbol->attr]
-  (let [e-ids#  '(if (e-ids :init) 
-                   matching-ids
-                   (clojure.set/intersection e-ids matching-ids))]
-    (concat `(recur ~clauses
-                    ~e-ids#)
-            '(bind-symbol->attr))))
+  []
+  (let [e-ids# '(if (e-ids :init) 
+                  matching-ids
+                  (clojure.set/intersection e-ids matching-ids))]
+    (concat '(recur (rest clauses))
+            [e-ids#]
+            '[bind-symbol->attr])))
+
+(defn e-v-pairs [db a]
+  "return e, v positions of datoms in the :avet index of db for given attribute a"
+  [db a]
+  (let [avet (:avet db)
+        datoms (avet a)]
+    (mapv (fn [[e a v tx op :as datom]]
+            [e v])
+          datoms)))
 
 (defn q [datalog-query db]
   (let [query-map-form (cond
@@ -166,38 +194,30 @@
                                                                      datoms (avet a)
                                                                      matching-ids (set (map first datoms))
                                                                      bind-symbol->attr (assoc bind-symbol->attr v a)]
-                                                                 (recur-next-clauses (rest clauses)
-                                                                                     bind-symbol->attr))
+                                                                 (recur-next-clauses))
                                              (and (symbol? e)
                                                   (keyword? a)
-                                                  (regex? v)) (let [id-val-pairs (let [query-all-v (vec (concat '[:find ?id ?v :where]
-                                                                                                                [['?id `~a '?v]]))]
-                                                                                   (q query-all-v db ))
+                                                  (regex? v)) (let [e-v-pairs (e-v-pairs db a) 
                                                                     regex v
                                                                     matching-ids (set (keep (fn [[id val]]
                                                                                               (when (re-find regex val)
                                                                                                 id))
-                                                                                            id-val-pairs))]
-                                                                (recur-next-clauses (rest clauses)
-                                                                                    bind-symbol->attr))
+                                                                                            e-v-pairs))]
+                                                                (recur-next-clauses))
                                              (and (symbol? e)
                                                   (keyword? a)
-                                                  (lambda? v)) (let [id-val-pairs (let [query-for-values (vec (concat '[:find ?id ?v :where]
-                                                                                                                      [['?id `~a '?v]]))]
-                                                                                    (q query-for-values db))
+                                                  (lambda? v)) (let [e-v-pairs (e-v-pairs db a)
                                                                      predicate (eval v)
                                                                      matching-ids (set (keep (fn [[id val]]
                                                                                                (when (predicate val)
                                                                                                  id))
-                                                                                             id-val-pairs))]
-                                                                 (recur-next-clauses (rest clauses)
-                                                                                     bind-symbol->attr))
+                                                                                             e-v-pairs))]
+                                                                 (recur-next-clauses))
                                              (and (symbol? e)
                                                   (keyword? a)) (let [aevt (:aevt db)
                                                                       datoms (aevt v)
                                                                       matching-ids (set (map first datoms))]
-                                                                  (recur-next-clauses (rest clauses)
-                                                                                      bind-symbol->attr))
+                                                                  (recur-next-clauses))
                                              :else [e-ids bind-symbol->attr])))]
     (mapv (fn [id]
             (let [this-entity (entity db id)
@@ -208,7 +228,6 @@
                     bind-symbols)))
           entity-ids)))
 
-(defn init [])
 (comment
   (mount/start)
   (mount/stop)
@@ -225,11 +244,30 @@
   (transact tx-queue [[42 :url "http://www.foo4.com"]])
   (transact tx-queue [[42 :image "http://www.pix.com"]])
   (transact tx-queue [[42 :sku "abc-sku"]])
+
+  (entity->datoms {:id 1
+                   :person/name "sonny"
+                   :person/age 1
+                   :person/email "sonny@foobar.com"})
+  (transact tx-queue [{:id 10
+                       :type "couch"
+                       :url "https://www.gannett-cdn.com/presto/2021/02/18/USAT/428c9034-7bba-4e97-a055-db2c32082003-cloud-couch-hero.jpg?width=660&height=372&fit=crop&format=pjpg&auto=webp"
+                       :image-url "https://www.gannett-cdn.com/presto/2021/02/18/USAT/428c9034-7bba-4e97-a055-db2c32082003-cloud-couch-hero.jpg?width=660&height=372&fit=crop&format=pjpg&auto=webp"
+                       :material "leather"
+                       :price 10000.0
+                       :description "11 affordable alternatives to the $10,000 couch that's blowing up on TikTok"
+                       :hex-color "#FFFFF"}
+                      [1 :age 1]
+                      ])
+
+  (transact tx-queue [[1 :age 10]])
   
   (q '[:find ?id ?email :where
        [?id :first-name "sonny"]
        [?id :email ?email]] @db)
 
+  (q '[:find ?id ?age :where [?id :age ?age]
+       ] @db)
   
   (require '[taoensso.timbre.appenders.core :as appenders])
   (log/merge-config! {:min-level :info
