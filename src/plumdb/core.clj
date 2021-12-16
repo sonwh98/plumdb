@@ -42,7 +42,7 @@
   :start (if (.exists (io/file "resources/db.edn"))
            (atom (load-val "resources/db.edn"))
            (do
-             (initdb-from "resources/original-data.json")
+             #_(initdb-from "resources/original-data.json")
              (atom {})))
   :stop (flush-val @db "resources/db.edn"))
 
