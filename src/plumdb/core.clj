@@ -77,7 +77,7 @@
 (defn index
   "index the given datoms into the db.
   db is a map with keys :tx-log :eavt :avet :aevt
-  datoms is a list/vector of datom"
+  datoms is a list/vector of datom or entity map"
   [db datoms-or-entities]
   (let [nested-datoms (map entity->datoms datoms-or-entities)
         datoms (-> nested-datoms flatten-datoms normalize-datoms)]
