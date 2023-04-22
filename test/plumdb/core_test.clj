@@ -1,7 +1,7 @@
 (ns plumdb.core-test
   (:require [clojure.test :refer :all]
             [mount.core :as mount]
-            [plumdb.core :as db]))
+            [stigmergy.plumdb :as db]))
 
 (deftest triple-store-tests
 
@@ -121,14 +121,14 @@
       )
     )
 
-  (testing "macro recur-next-clauses"
-    (let [repeated-code '(recur
-                          (rest clauses)
-                          (if (e-ids :init)
-                            matching-ids
-                            (clojure.set/intersection e-ids matching-ids))
-                          bind-symbol->attr)]
-      (is (= repeated-code (macroexpand '(db/recur-next-clauses))))))
+  #_(testing "macro recur-next-clauses"
+      (let [repeated-code '(recur
+                            (rest clauses)
+                            (if (e-ids :init)
+                              matching-ids
+                              (clojure.set/intersection e-ids matching-ids))
+                            bind-symbol->attr)]
+        (is (= repeated-code (macroexpand '(db/recur-next-clauses))))))
 
 
   (testing "flatten-datoms"

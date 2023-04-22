@@ -1,4 +1,4 @@
-(ns plumdb.core
+(ns stigmergy.plumdb
   (:require
    [clojure.core.async :as a :include-macros true]
    [clojure.java.io :as io]
